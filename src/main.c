@@ -1,95 +1,79 @@
-/*
- * Copyright (c) 2011 Petteri Aimonen
- * Copyright (c) 2021 Basalte bv
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/drivers/gpio.h>
 
-#include <pb_encode.h>
-#include <pb_decode.h>
-#include "src/simple.pb.h"
+#include "services/led_service.h"
+#include "lib/bluetooth.h"
+#include "lib/proto_helper.h"
 
-bool encode_message(uint8_t *buffer, size_t buffer_size, size_t *message_length)
+#define RED_LED_NODE DT_ALIAS(led0)
+#define GREEN_LED_NODE DT_ALIAS(led1)
+#define BLUE_LED_NODE DT_ALIAS(led2)
+
+static const struct gpio_dt_spec red_led = GPIO_DT_SPEC_GET(RED_LED_NODE, gpios);
+static const struct gpio_dt_spec green_led = GPIO_DT_SPEC_GET(GREEN_LED_NODE, gpios);
+static const struct gpio_dt_spec blue_led = GPIO_DT_SPEC_GET(BLUE_LED_NODE, gpios);
+
+static led_color_t led_color = {
+	.red = 0,
+	.green = 1,
+	.blue = 0,
+};
+
+static uint8_t encoded_buffer[LEDColorMessage_size];
+static size_t message_length;
+
+static int leds_init(void)
 {
-	bool status;
-
-	/* Allocate space on the stack to store the message data.
-	 *
-	 * Nanopb generates simple struct definitions for all the messages.
-	 * - check out the contents of simple.pb.h!
-	 * It is a good idea to always initialize your structures
-	 * so that you do not have garbage data from RAM in there.
-	 */
-	SimpleMessage message = SimpleMessage_init_zero;
-
-	/* Create a stream that will write to our buffer. */
-	pb_ostream_t stream = pb_ostream_from_buffer(buffer, buffer_size);
-
-	/* Fill in the lucky number */
-	message.lucky_number = 13;
-	for (int i = 0; i < 8; ++i) {
-		message.buffer[i] = (uint8_t)(i * 2);
+	if (!device_is_ready(red_led.port) ||
+		!device_is_ready(green_led.port) ||
+		!device_is_ready(blue_led.port))
+	{
+		printk("One or more LEDs are not ready\n");
+		return -ENODEV;
 	}
-
-	/* Now we are ready to encode the message! */
-	status = pb_encode(&stream, SimpleMessage_fields, &message);
-	*message_length = stream.bytes_written;
-
-	if (!status) {
-		printk("Encoding failed: %s\n", PB_GET_ERROR(&stream));
-	}
-
-	return status;
+	return 0;
 }
 
-bool decode_message(uint8_t *buffer, size_t message_length)
+static void update_leds()
 {
-	bool status;
+	int red_state = led_color.red == 1 ? GPIO_OUTPUT_ACTIVE : GPIO_OUTPUT_INACTIVE;
+	int green_state = led_color.green == 1 ? GPIO_OUTPUT_ACTIVE : GPIO_OUTPUT_INACTIVE;
+	int blue_state = led_color.blue == 1 ? GPIO_OUTPUT_ACTIVE : GPIO_OUTPUT_INACTIVE;
 
-	/* Allocate space for the decoded message. */
-	SimpleMessage message = SimpleMessage_init_zero;
+	gpio_pin_configure_dt(&red_led, red_state);
+	gpio_pin_configure_dt(&green_led, green_state);
+	gpio_pin_configure_dt(&blue_led, blue_state);
+}
 
-	/* Create a stream that reads from the buffer. */
-	pb_istream_t stream = pb_istream_from_buffer(buffer, message_length);
+void write_callback(uint8_t *data, uint16_t len)
+{
+	led_color = decode_message(data, len);
+	update_leds();
+}
 
-	/* Now we are ready to decode the message. */
-	status = pb_decode(&stream, SimpleMessage_fields, &message);
+uint8_t *read_callback()
+{
+	encode_message(encoded_buffer, sizeof(encoded_buffer), &message_length, &led_color);
 
-	/* Check for errors... */
-	if (status) {
-		/* Print the data contained in the message. */
-		printk("Your lucky number was %d!\n", (int)message.lucky_number);
-		printk("Buffer contains: ");
-		for (int i = 0; i < 8; ++i) {
-			printk("%s%d", ((i == 0) ? "" : ", "), (int) message.buffer[i]);
-		}
-		printk("\n");
-	} else {
-		printk("Decoding failed: %s\n", PB_GET_ERROR(&stream));
+	printk("Encoded message length: %d\n", LEDColorMessage_size);
+	for (int i = 0; i < LEDColorMessage_size; i++)
+	{
+		printk("%d ", encoded_buffer[i]);
 	}
-
-	return status;
+	printk("\n");
+	return encoded_buffer;
 }
 
 int main(void)
 {
-	/* This is the buffer where we will store our message. */
-	uint8_t buffer[SimpleMessage_size];
-	size_t message_length;
+	ble_init();
+	led_service_init(write_callback, read_callback);
+	leds_init();
+	update_leds();
 
-	/* Encode our message */
-	if (!encode_message(buffer, sizeof(buffer), &message_length)) {
-		return 0;
+	while (1)
+	{
+		k_sleep(K_FOREVER);
 	}
-
-	/* Now we could transmit the message over network, store it in a file or
-	 * wrap it to a pigeon's leg.
-	 */
-
-	/* But because we are lazy, we will just decode it immediately. */
-	decode_message(buffer, message_length);
-	return 0;
 }

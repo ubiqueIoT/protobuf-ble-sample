@@ -3,7 +3,8 @@
 
 syntax = "proto3";
 
-message SimpleMessage {
-    int32 lucky_number = 1;
-    bytes buffer = 2;
+message LEDColorMessage {
+    int32 red = 1;
+    int32 green = 2;
+    int32 blue = 3;
 }
