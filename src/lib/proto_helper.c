@@ -1,11 +1,5 @@
 #include "proto_helper.h"
 
-static led_color_t led_color = {
-    .red = 0,
-    .green = 0,
-    .blue = 0,
-};
-
 bool encode_message(uint8_t *buffer, size_t buffer_size, size_t *message_length, led_color_t *led_color)
 {
     LEDColorMessage message = LEDColorMessage_init_zero;
@@ -28,6 +22,11 @@ bool encode_message(uint8_t *buffer, size_t buffer_size, size_t *message_length,
 
 led_color_t decode_message(uint8_t *buffer, size_t message_length)
 {
+    led_color_t led_color = {
+        .red = 0,
+        .green = 0,
+        .blue = 0,
+    };
     LEDColorMessage message = LEDColorMessage_init_zero;
     pb_istream_t stream = pb_istream_from_buffer(buffer, message_length);
     bool status = pb_decode(&stream, LEDColorMessage_fields, &message);
